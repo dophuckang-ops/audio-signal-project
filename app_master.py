@@ -73,7 +73,7 @@ with tab2:
       time_results=[]
       #Vòng lặp xử lý từng file âm thanh
       for file in uploaded_time_files:
-          file.seek(0)
+         file.seek(0)
          with tempfile.NamedTemporaryFile(delete=False,suffix=".wav") as tmp_file:
             tmp_file.write(file.getvalue())
             tmp_path=tmp_file.name
