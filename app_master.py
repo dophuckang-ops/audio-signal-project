@@ -161,8 +161,8 @@ with tab2:
       for class_name in df_time(["Class"]).unique():
          class_data=df_time[df_time["Class"]==class_name]
          ax_scatter.scatter(
-            class_data=["RMS"],
-            class_data=["ZCR"],
+            class_data["RMS"],
+            class_data["ZCR"],
             label=class_name,
             s=60,
             alpha=0.8
