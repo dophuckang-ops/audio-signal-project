@@ -158,7 +158,7 @@ with tab2:
       st.divider()
       #Biểu đồ phân tán RMS và ZCR
       fig_scatter, ax_scatter=plt.subplots(figsize=(8,5))
-      for class_name in df_time(["Class"]).unique():
+      for class_name in df_time["Class"].unique():
          class_data=df_time[df_time["Class"]==class_name]
          ax_scatter.scatter(
             class_data["RMS"],
