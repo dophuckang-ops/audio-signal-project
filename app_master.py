@@ -157,7 +157,7 @@ with tab2:
          plt.close(fig_zcr) # Đóng figure để tránh giải phóng bộ nhớ đệm
       st.divider()
       #Biểu đồ phân tán RMS và ZCR
-      fig_scatter, ax_scatter=plt.subplots(figsize=(8,5))
+      fig_scatter, ax_scatter=plt.subplots(figsize=(6,4))
       for class_name in df_time["Class"].unique():
          class_data=df_time[df_time["Class"]==class_name]
          ax_scatter.scatter(
