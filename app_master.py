@@ -117,7 +117,12 @@ with tab2:
          zcr_val = float(np.mean(librosa.feature.zero_crossing_rate(y)))
         #Tách tên lớp thành chuỗi string chuẩn
          file_name=file.name
-         class_name=file_name.split('_')[0] if'_'in file_name else "Unknown"
+         file_stem = os.path.splitext(file_name)[0]
+         class_name = (
+         file_stem.split('_')[0].strip().lower()
+         if '_' in file_stem
+         else "Unknown"
+         )
          time_results.append({ 
             "File": file_name, 
             "Class": class_name, 
