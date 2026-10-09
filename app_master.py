@@ -150,7 +150,6 @@ with tab2:
                     "RMS",
                     "STD",
                     "ZCR",
-                    "Mean"
                 ]
             ]
       st.dataframe(df_summary.round(8),use_container_width=True)
