@@ -39,7 +39,7 @@ col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
     st.image(
-        "DSC02174.JPG",
+        "assets/DSC02174.JPG",
         caption="Nhóm thực hiện đề tài phân tích và xử lý tín hiệu âm thanh",
         use_container_width=True
     )
@@ -107,7 +107,7 @@ with tab2:
          try:
             y, sr = load_audio(file)
          except Exception as e:
-            st.error(f"❌ Lỗi khi đọc file {file.name}: {e}") 
+            st.error(f" Lỗi khi đọc file {file.name}: {e}") 
             continue
         #Tính toán các chỉ số
          duration = float(len(y) / sr) 
@@ -197,12 +197,12 @@ with tab2:
       st.divider()
       #Biểu đồ phân tán RMS và ZCR
       fig_scatter, ax_scatter=plt.subplots(figsize=(6,4))
-      for class_name in df_time["Class"].unique():
-         class_data=df_time[df_time["Class"]==class_name]
+      for class_label in df_time["Class"].unique():
+         class_data=df_time[df_time["Class"]==class_label]
          ax_scatter.scatter(
             class_data["RMS"],
             class_data["ZCR"],
-            label=class_name,
+            label=class_label,
             s=60,
             alpha=0.8
          )
@@ -216,7 +216,239 @@ with tab2:
       plt.close(fig_scatter)
    else:
       st.info("Vui lòng chọn hoặc kéo thả các file'.wav' để trích xuất đặc trưng miền thời gian")
-         
+with tab3:
+   st.header("Phân tích tín hiệu âm thanh trong miền tần số")
+   st.write("Phân tích phổ biên độ, phát hiện các đỉnh phổ và trích xuất đặc trưng miền tần số.")
+   uploaded_fft_file=st.file_uploader("Chọn file âm thanh (.wav):",type=["wav"],key="tab3_fft_uploader")
+   if uploaded_fft_file is not None:
+      try:
+         #Đọc tín hiệu
+         y,sr=load_audio(uploaded_fft_file)
+         y = np.asarray(y, dtype=np.float64)
+         if len(y)<2:
+            st.error("File âm thanh quá ngắn để phân tích.")
+         elif not np.all(np.isfinite(y)):
+            st.error("Tín hiệu chứa giá trị không hợp lệ.")
+         else:
+            #Loại bỏ thành phần DC
+            y_centered = y - np.mean(y)
+            #Áp dụng cửa sổ Hann
+            N = len(y_centered)
+            window = np.hanning(N)
+            y_windowed = y_centered * window 
+            #Tính FFT
+            fft_values=np.fft.rfft(y_windowed)
+            frequencies=np.fft.rfftfreq(N,d=1/sr)
+            #Tính phổ biên độ
+            magnitude = (2 * np.abs(fft_values) / np.sum(window))
+            magnitude[0] /= 2
+            if N % 2 == 0:
+               magnitude[-1] /= 2
+            #Tìm các đỉnh phổ
+            from scipy.signal import find_peaks
+            if len(magnitude)>2:
+               peak_indices,_=find_peaks(magnitude,prominence=np.max(magnitude)*0.01, distance=max(1,int(20/(sr/N))))
+            else:
+               peak_indices = np.array([], dtype=int)
+            #Loại bỏ đỉnh DC và sắp xếp
+            peak_indices = peak_indices[peak_indices > 0]
+            peak_indices = peak_indices[np.argsort(magnitude[peak_indices])[::-1]]
+            #Tìm tần số trội
+            if len(magnitude) > 1:
+               dominant_index = (np.argmax(magnitude[1:]) + 1)
+               dominant_frequency = frequencies[dominant_index]
+               dominant_magnitude = magnitude[dominant_index]
+            else:
+               dominant_frequency = 0.0
+               dominant_magnitude = 0.0
+            #Tính các thông số cơ bản
+            duration = N / sr
+            frequency_resolution = sr / N
+            st.divider()
+            st.subheader("Thông số tín hiệu")
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("Tần số lấy mẫu",f"{sr:,}Hz")
+            c2.metric("Thời lượng",f"{duration:.3f}s")
+            c3.metric("Độ phân giải tần số",f"{frequency_resolution:.3f}Hz")
+            c4.metric("Tần số trội",f"{dominant_frequency:.2f}Hz")
+            st.divider()
+            st.subheader("Phổ biên độ FFT")
+            max_frequency = sr / 2
+            default_limit = min(5000.0,max_frequency)
+            frequency_limit = st.slider("Giới hạn tần số hiển thị (Hz):",min_value=0.0,max_value=float(max_frequency),value=float(default_limit),key="tab3_frequency_limit")
+            #Vẽ phổ
+            mask = frequencies <= frequency_limit
+            fig_fft, ax_fft = plt.subplots(figsize=(11, 4.5))
+            ax_fft.plot(frequencies[mask],magnitude[mask],linewidth=0.8,label="Phổ biên độ")
+            #Đánh dấu tần số trội nếu nằm trong khoảng
+            if dominant_frequency <= frequency_limit:
+                    ax_fft.axvline(
+                        dominant_frequency,
+                        linestyle="--",
+                        linewidth=1,
+                        label=(
+                            f"Tần số trội: "
+                            f"{dominant_frequency:.2f} Hz"
+                        )
+                    )
+                    ax_fft.set_title(
+                    "Phổ biên độ của tín hiệu âm thanh"
+                )
+                    ax_fft.set_xlabel("Tần số (Hz)")
+                    ax_fft.set_ylabel("Biên độ phổ")
+                    ax_fft.grid(
+                    True,
+                    linestyle=":",
+                    alpha=0.5
+                )
+                    ax_fft.legend()
+                    plt.tight_layout()
+                    st.pyplot(fig_fft)
+                    plt.close(fig_fft)
+                    # 12. Bảng đỉnh phổ
+                    st.divider()
+                    st.subheader("Các đỉnh phổ nổi bật")
+                    if len(peak_indices) > 0:
+                        peak_table = pd.DataFrame({
+                        "Tần số (Hz)": frequencies[peak_indices],
+                        "Biên độ phổ": magnitude[peak_indices]
+                    })
+
+                    peak_table = peak_table.head(20)
+
+                    st.dataframe(
+                        peak_table.round(6),
+                        use_container_width=True
+                    )
+
+                    csv_peaks = peak_table.to_csv(
+                        index=False,
+                        encoding="utf-8-sig"
+                    ).encode("utf-8-sig")
+
+                    st.download_button(
+                        "Tải bảng đỉnh phổ (CSV)",
+                        data=csv_peaks,
+                        file_name="fft_peaks.csv",
+                        mime="text/csv",
+                        key="tab3_download_peaks"
+                    )
+            else:
+                    st.info(
+                        "Không tìm thấy đỉnh phổ nổi bật "
+                        "với ngưỡng hiện tại."
+                    )
+            st.divider()
+            st.subheader("Các đặc trưng miền tần số")
+
+             # Dùng bình phương biên độ để tính phân bố năng lượng phổ
+            power_spectrum = magnitude ** 2
+            total_power = np.sum(power_spectrum)
+
+            if total_power > 0:
+                 # Spectral Centroid
+                 spectral_centroid = (
+                     np.sum(frequencies * magnitude)
+                     / np.sum(magnitude)
+                     if np.sum(magnitude) > 0
+                     else 0.0
+                 )
+
+                 # Spectral Bandwidth
+                 spectral_bandwidth = np.sqrt(
+                     np.sum(
+                         power_spectrum
+                         * (frequencies - spectral_centroid) ** 2
+                     ) / total_power
+                 )
+
+                 # Spectral Rolloff tại 85% năng lượng phổ
+                 cumulative_power = np.cumsum(power_spectrum)
+
+                 rolloff_index = np.searchsorted(
+                     cumulative_power,
+                     0.85 * total_power
+                 )
+
+                 rolloff_index = min(
+                     rolloff_index,
+                     len(frequencies) - 1
+                 )
+
+                 spectral_rolloff = frequencies[rolloff_index]
+
+                 # Spectral Flatness
+                 epsilon = np.finfo(float).eps
+
+                 spectral_flatness = (
+                     np.exp(np.mean(np.log(power_spectrum + epsilon)))
+                     / (np.mean(power_spectrum) + epsilon)
+                 )
+
+            else:
+                 spectral_centroid = 0.0
+                 spectral_bandwidth = 0.0
+                 spectral_rolloff = 0.0
+                 spectral_flatness = 0.0
+            feature_data = {
+                 "Đặc trưng": [
+                     "Spectral Centroid",
+                     "Spectral Bandwidth",
+                     "Spectral Rolloff (85%)",
+                     "Spectral Flatness"
+                 ],
+                 "Giá trị": [
+                     spectral_centroid,
+                     spectral_bandwidth,
+                     spectral_rolloff,
+                     spectral_flatness
+                 ],
+                 "Đơn vị": [
+                     "Hz",
+                     "Hz",
+                     "Hz",
+                     "Không thứ nguyên"
+                 ],
+                 "Ý nghĩa": [
+                     "Tâm khối phổ",
+                     "Độ phân tán quanh tâm phổ",
+                     "Tần số chứa 85% năng lượng phổ tích lũy",
+                     "Mức độ phẳng của phổ"
+                 ]
+             }
+            df_frequency_features = pd.DataFrame(feature_data)
+            st.dataframe(
+                 df_frequency_features.round(6),
+                 use_container_width=True
+             )
+            csv_frequency_features = df_frequency_features.to_csv(
+                 index=False,
+                 encoding="utf-8-sig"
+             ).encode("utf-8-sig")
+            st.download_button(
+                 "Tải đặc trưng miền tần số (CSV)",
+                 data=csv_frequency_features,
+                 file_name="frequency_features.csv",
+                 mime="text/csv",
+                 key="tab3_download_features"
+             )
+
+                    # 13. Nghe lại âm thanh
+            st.divider()
+            st.subheader("Nghe lại file âm thanh")
+            st.audio(uploaded_fft_file)
+      except Exception as e:
+            st.error(
+                f"Không thể phân tích file âm thanh: {e}"
+            )
+   else:
+        st.info(
+            "Vui lòng tải lên một file WAV để bắt đầu phân tích."
+        )
+      
+
+
+
       
 
 
