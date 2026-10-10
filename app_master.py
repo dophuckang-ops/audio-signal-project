@@ -39,7 +39,7 @@ col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
     st.image(
-        "DSC02174.JPG",
+        "assets/DSC02174.JPG",
         caption="Nhóm thực hiện đề tài phân tích và xử lý tín hiệu âm thanh",
         use_container_width=True
     )
@@ -59,6 +59,7 @@ with tab1:
         rms_energy = np.sqrt(np.mean(y**2))
         zcr_mean = float(np.mean(librosa.feature.zero_crossing_rate(y)))
         std=np.std(y)
+        crest_factor=(max_amp/rms_energy if rms_energy>0 else 0.0)
         st.divider() 
         st.subheader("Nghe Thử Âm Thanh") 
         st.audio(uploaded_single) 
@@ -69,11 +70,12 @@ with tab1:
         c2.metric("Thời lượng (Duration)", f"{duration:.2f} s") 
         c3.metric("Tổng số mẫu (N)", f"{len(y):,}")
        #Đặc trưng miền thời gian
-        c4,c5,c6,c7=st.columns(4)
+        c4,c5,c6,c7,c8=st.columns(5)
         c4.metric("Biên độ cực đại", f"{max_amp:.4f}") 
         c5.metric("Năng lượng RMS", f"{rms_energy:.4f}") 
         c6.metric("Tỷ lệ qua điểm 0 (ZCR)", f"{zcr_mean:.4f}") 
         c7.metric("Độ lệch chuẩn(STD)",f"{std:.4f}")
+        c8.metric("Crest Factor", f"{crest_factor:.4f}")
         st.divider()
         st.subheader("Đồ thị dạng sóng(Waveform)")
         times = np.arange(len(y)) / sr 
@@ -115,7 +117,8 @@ with tab2:
          rms_val = np.sqrt(np.mean(y**2))
          std_val = np.std(y)
          zcr_val = float(np.mean(librosa.feature.zero_crossing_rate(y)))
-        #Tách tên lớp thành chuỗi string chuẩn
+         crest_factor=(peak_val/rms_val if rms_val>0 else 0.0)
+        #Tách tên lớp thành chuỗi string chuẩn  
          file_name=file.name
          file_stem = os.path.splitext(file_name)[0]
          class_name = (
@@ -131,7 +134,8 @@ with tab2:
             "Peak": round(peak_val, 5), 
             "RMS": round(rms_val, 5), 
             "STD": round(std_val, 5), 
-            "ZCR": round(zcr_val, 5) })
+            "ZCR": round(zcr_val, 5),
+            "Crest Factor":round(float(crest_factor),5)})
     #Chuyển đổi dữ liệu thành Dataframe Pandas
       df_time=pd.DataFrame(time_results)
       st.subheader("Bảng Đặc Trưng Miền Thời Gian Chi Tiết")
