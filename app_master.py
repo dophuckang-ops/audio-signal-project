@@ -39,7 +39,7 @@ col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
     st.image(
-        "assets/DSC02174.JPG",
+        "DSC02174.JPG",
         caption="Nhóm thực hiện đề tài phân tích và xử lý tín hiệu âm thanh",
         use_container_width=True
     )
