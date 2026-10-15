@@ -12,7 +12,7 @@ st.title("Phần Mềm Phân Tích Và Xử Lý Tín Hiệu Âm Thanh")
 st.subheader("Đề tài: Phân tích và phân biệt âm thanh thông qua đặc trưng tín hiệu miền thời gian và miền tần số")
 st.caption("6-STARS")
 def load_audio(file):
-    file_bytes = file.getvalue() 
+    file_bytes = file.getvalue()    
     # 1. Ưu tiên đọc trực tiếp trên RAM bằng scipy
     try:
         sr, y = wavfile.read(io.BytesIO(file_bytes))
@@ -39,7 +39,7 @@ col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
     st.image(
-        "DSC02174.JPG",
+        "assets/DSC02174.JPG",
         caption="Nhóm thực hiện đề tài phân tích và xử lý tín hiệu âm thanh",
         use_container_width=True
     )
@@ -436,7 +436,175 @@ with tab3:
                  mime="text/csv",
                  key="tab3_download_features"
              )
-
+            #Ước lượng tần số cơ bản và phân tích F0
+            st.divider()
+            st.subheader("Ước lượng tần số cơ bản F0")
+            st.write( "Ước lượng F0 để khảo sát cao độ của nguyên âm "
+    "và các nốt piano. Một số âm thanh như tiếng vỗ tay "
+    "hoặc tiếng gõ có thể không có F0 ổn định.")
+            #1. Kiểm tra tín hiệu
+            if len(y)==0 or np.max(np.abs(y))<1e-8:
+                st.warning("Tín hiệu rỗng hoặc gần như im lặng. "
+        "Không thể ước lượng F0.")
+            else:
+                try:
+                    y_f0=np.asarray(y,dtype=np.float32)
+                    y_f0=y_f0-np.mean(y_f0)
+                    max_abs=np.max(np.abs(y_f0))
+                    if max_abs>0:
+                        y_f0=y_f0/max_abs
+                    frame_lenghth_f0=4096
+                    hop_length_f0=256
+                    fmin_f0=65
+                    fmax_f0=min(1200.0, sr / 2 - 1)
+                    if len(y_f0)<frame_lenghth_f0:
+                        y_f0=np.pad(y_f0,(0,frame_lenghth_f0-len(y_f0)))
+                    if fmax_f0<=fmin_f0:
+                        st.warning( "Tần số lấy mẫu quá thấp để ước lượng F0 "
+                "trong dải tần đã chọn.")
+                    else:
+                        f0_values, voiced_flag, voiced_probs = librosa.pyin(y_f0,fmin=fmin_f0,fmax=fmax_f0,sr=int(sr),frame_length=frame_lenghth_f0,hop_length=hop_length_f0)
+                        valid_mask=(voiced_flag & np.isfinite(f0_values)& (f0_values>0))
+                        if not np.any(valid_mask):
+                            st.warning( "Không tìm được F0 đáng tin cậy. "
+                    "Âm thanh có thể không có cao độ ổn định, "
+                    "quá ngắn hoặc chứa nhiều nhiễu.")
+                        else:
+                           valid_f0 = f0_values[valid_mask]
+                           valid_probs = voiced_probs[valid_mask]
+                           confidence_mask = valid_probs >= 0.5
+                           if np.any(confidence_mask):
+                               reliable_f0 = valid_f0[confidence_mask]
+                               estimated_f0 = float(np.median(reliable_f0))
+                           else:
+                               estimated_f0 = float(np.median(valid_f0))
+                           mean_voiced_prob = float(np.mean(valid_probs))
+                           voiced_ratio = float(np.mean(valid_mask))
+                           mean_voiced_prob = float(np.mean(valid_probs))
+                           #Xác định nốt nhạc gần nhất
+                           midi_note=int(np.round(librosa.hz_to_midi(estimated_f0)))
+                           note_name=librosa.midi_to_note(midi_note)
+                           nearest_note_f0=float(librosa.midi_to_hz(midi_note))
+                           cents_diviation=float(1200*np.log2(estimated_f0/nearest_note_f0))
+                           #Hiển thị kết quả
+                           st.markdown("### Kết quả ước lượng")
+                           col1,col2,col3 =st.columns(3)
+                           col1.metric("Tần số cơ bản F0",f"{estimated_f0:.2f}Hz")
+                           col2.metric("Nốt nhạc gần nhất",f"{note_name}")
+                           col3.metric("Sai lệch cao độ",f"{cents_diviation:+.1f} cents")
+                           st.write(f"Tần số chuẩn của nốt{note_name}:"
+                                    f"{nearest_note_f0:.2f} Hz.")
+                           col4, col5 = st.columns(2)
+                           col4.metric("Tỷ lệ khung hữu thanh",f"{voiced_ratio * 100:.1f}%")
+                           col5.metric("Voiced probability trung bình",f"{mean_voiced_prob:.2f}")
+                           st.caption(
+                    "Voiced probability phản ánh mức độ tin tưởng "
+                    "của thuật toán vào việc nhận diện khung hữu thanh; "
+                    "không phải xác suất F0 chính xác tuyệt đối."
+                )
+                           if mean_voiced_prob < 0.5:
+                             st.warning(
+                        "Kết quả F0 có độ tin cậy hạn chế. "
+                        "Nên kiểm tra tín hiệu và phổ FFT trước "
+                        "khi đưa ra kết luận."
+                    )
+                           st.divider()
+                           st.markdown("### Đối chiếu nốt piano")
+                           piano_reference = {
+                    "C4": 261.63,
+                    "G4": 392.00,
+                    "C5": 523.25
+                }
+                           reference_note = st.selectbox(
+                    "Chọn nốt piano được ghi âm",
+                    options=[
+                        "Không chọn",
+                        "C4",
+                        "G4",
+                        "C5"
+                    ],
+                    key="tab3_f0_piano_reference"
+                )
+                           if reference_note !="Không chọn":
+                               target_f0 = piano_reference[reference_note]
+                               error_hz = estimated_f0 - target_f0
+                               error_percent = (error_hz / target_f0) * 100
+                               error_cents = float(1200 * np.log2(estimated_f0 / target_f0))
+                               col1, col2, col3 = st.columns(3)
+                               col1.metric(  "F0 chuẩn",
+                        f"{target_f0:.2f} Hz")
+                               col2.metric("Sai lệch tần số",
+                        f"{error_hz:+.2f} Hz")
+                               col3.metric("Sai lệch cao độ",
+                        f"{error_cents:+.1f} cents")
+                               st.write(  f"Sai lệch tương đối: "
+                        f"{error_percent:+.2f}%.")
+                           st.divider()
+                           st.markdown("### Phân tích họa âm (Harmonics)")
+                           st.write( "Tần số lý thuyết của họa âm bậc k: "
+                    "fₖ = k × F0.")
+                           harmonic_data=[]
+                           num_harmonics = 10
+                           tolerance=max(10,frequency_resolution*3)
+                           for k in range(1,num_harmonics + 1):
+                               theoretical_freq = k * estimated_f0
+                               if theoretical_freq>=sr/2:
+                                   break
+                               mask=( (frequencies >= theoretical_freq - tolerance)
+                        & (frequencies <= theoretical_freq + tolerance))
+                               if not np.any(mask):
+                                   continue
+                               local_indices=np.where(mask)[0]
+                               peak_idx=local_indices[np.argmax(magnitude[local_indices])]
+                               actual_freq = float(frequencies[peak_idx])
+                               peak_magnitude = float(magnitude[peak_idx])
+                               frequency_error=(actual_freq - theoretical_freq)
+                               harmonic_data.append({
+                        "Bậc họa âm": k,
+                        "Tần số lý thuyết (Hz)": round(
+                            theoretical_freq, 2
+                        ),
+                        "Tần số đỉnh phổ (Hz)": round(
+                            actual_freq, 2
+                        ),
+                        "Sai lệch (Hz)": round(
+                            frequency_error, 2
+                        ),
+                        "Biên độ": round(
+                            peak_magnitude, 6
+                        )
+                    })
+                           #Hiển thị kết quả và xuất bảng hoạ âm
+                           if harmonic_data:
+                               df_harmonics=pd.DataFrame(harmonic_data)
+                               st.dataframe(df_harmonics,
+                        use_container_width=True,
+                        hide_index=True)
+                               csv_harmonics = df_harmonics.to_csv(
+                        index=False
+                    ).encode("utf-8-sig")
+                               st.download_button(
+                        label="Tải bảng họa âm (CSV)",
+                        data=csv_harmonics,
+                        file_name="harmonic_analysis.csv",
+                        mime="text/csv",
+                        key="tab3_f0_harmonics_csv"
+                    )
+                               st.caption(
+                        "Các đỉnh phổ được tìm trong vùng lân cận "
+                        "bội số của F0. Kết quả là phép đối chiếu "
+                        "gần đúng, không đảm bảo mọi đỉnh tìm thấy "
+                        "đều là họa âm thực sự."
+                    )
+                           else:
+                               st.info(
+                        "Không tìm thấy đỉnh phổ phù hợp "
+                        "với các họa âm trong dải phân tích."
+                    )
+                except Exception as e:
+                    st.error(
+            f"Không thể ước lượng F0 hoặc phân tích họa âm: {e}"
+        )
                     # 13. Nghe lại âm thanh
             st.divider()
             st.subheader("Nghe lại file âm thanh")
