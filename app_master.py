@@ -6,6 +6,11 @@ import matplotlib.pyplot as plt
 import scipy.io.wavfile as wavfile
 import io
 import os
+from tab4_noise_filter import render_noise_filter_tab
+from scipy.signal import (
+    butter, filtfilt, firwin, freqz, resample_poly, sosfiltfilt,
+    sosfreqz, welch,
+)
 #Cấu hình giao diện ứng dụng
 st.set_page_config(page_title="6-STARS | Phân tích và phân biệt âm thanh",layout="wide")
 st.title("Phần Mềm Phân Tích Và Xử Lý Tín Hiệu Âm Thanh")
@@ -39,14 +44,15 @@ col1, col2, col3 = st.columns([1, 2, 1])
 
 with col2:
     st.image(
-        "DSC02174.JPG",
+        "assets/DSC02174.JPG",
         caption="Nhóm thực hiện đề tài phân tích và xử lý tín hiệu âm thanh",
         use_container_width=True
     )
-tab1,tab2,tab3=st.tabs([
+tab1,tab2,tab3,tab4=st.tabs([
     "1.Phân Tích 1 File âm thanh lẻ",
-    "2.Trích xuất Miền Thời Gian",
-    "3.Phổ FFT Và Miền Tần Số "
+    "2.Trích Xuất Miền Thời Gian",
+    "3.Phổ FFT Và Miền Tần Số ",
+    "4.Nhiễu Và Lọc Nhiễu"
 ])
 with tab1:
     st.header("Phân tích và xem dạng sóng(waveform) của 1 file âm thanh")
@@ -617,7 +623,9 @@ with tab3:
         st.info(
             "Vui lòng tải lên một file WAV để bắt đầu phân tích."
         )
-      
+with tab4:
+    render_noise_filter_tab()
+    
 
 
 
