@@ -733,7 +733,7 @@ def main():
     st.title("Phần Mềm Phân Tích Và Xử Lý Tín Hiệu Âm Thanh")
     st.subheader("Đề tài: Phân tích và phân biệt âm thanh thông qua đặc trưng tín hiệu miền thời gian và miền tần số")
     st.caption("6-STARS")
-    image_path = Path(__file__).resolve().parent / "assets" / "DSC02174.JPG"
+    image_path = Path(__file__).resolve().parent /"DSC02174.JPG"
     if image_path.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
