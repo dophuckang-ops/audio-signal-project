@@ -87,7 +87,6 @@ def design_filter(sr, kind, family, cutoff, order=4, numtaps=201):
 
 
 def apply_filter(x, family, coefficients, padlen):
-    """Lọc tiến rồi lùi: pha bằng 0, dùng cho file đã ghi, không phải realtime."""
     x = np.asarray(x, dtype=np.float64)
     if x.ndim != 1 or not np.all(np.isfinite(x)):
         raise ValueError("Tín hiệu lọc phải là mono và chứa các mẫu hữu hạn.")
