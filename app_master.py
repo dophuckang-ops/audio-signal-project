@@ -15,10 +15,8 @@ import soundfile as sf
 import streamlit as st
 from scipy.signal import find_peaks
 from tab4_noise_filter import render_noise_filter_tab
-
 @st.cache_data(show_spinner=False, max_entries=64)
 def load_audio_bytes(data: bytes):
-    """Read WAV bytes without temporary files; preserve recording amplitude."""
     y, sr = sf.read(io.BytesIO(data), dtype="float64", always_2d=True)
     if y.shape[0] < 32:
         raise ValueError("File âm thanh phải có ít nhất 32 mẫu.")
@@ -55,7 +53,6 @@ def _validated_mono(y, sr):
 
 
 def time_features(y, sr):
-    """Full-file amplitude statistics; ZCR is crossings per second."""
     signal = _validated_mono(y, sr)
     peak = float(np.max(np.abs(signal)))
     rms = float(np.sqrt(np.mean(signal ** 2)))
@@ -80,12 +77,6 @@ def estimate_f0(
     probability_threshold=0.5,
     min_reliable_ratio=0.1,
 ):
-    """Estimate a file's F0 only when enough voiced, energetic frames pass the criteria.
-
-    mean_probability averages pYIN probabilities across ALL frames.
-    reliable_ratio and voiced_ratio use ALL analysed frames as denominator.
-    RMS gating applies to the mean-removed, peak-normalized pitch copy only.
-    """
     if not (np.isfinite(fmin) and np.isfinite(fmax) and 0 < fmin < fmax):
         raise ValueError("Cần 0 < F0 tối thiểu < F0 tối đa.")
     if not 0 <= probability_threshold <= 1 or not 0 <= min_reliable_ratio <= 1:
@@ -173,11 +164,6 @@ def estimate_f0(
 
 
 def fft_analysis(y, sr):
-    """One-sided Hann amplitude spectrum, with consistent amplitude moments.
-
-    Rolloff uses 85% of squared spectral amplitude; flatness also uses power.
-    A constant or silent signal has no defined dominant frequency.
-    """
     signal = _validated_mono(y, sr)
     if signal.size < 3:
         raise ValueError("Cần ít nhất 3 mẫu để áp dụng cửa sổ Hann.")
@@ -733,7 +719,7 @@ def main():
     st.title("Phần Mềm Phân Tích Và Xử Lý Tín Hiệu Âm Thanh")
     st.subheader("Đề tài: Phân tích và phân biệt âm thanh thông qua đặc trưng tín hiệu miền thời gian và miền tần số")
     st.caption("6-STARS")
-    image_path = Path(__file__).resolve().parent /"DSC02174.JPG"
+    image_path = Path(__file__).resolve().parent / "assets" / "DSC02174.JPG"
     if image_path.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
