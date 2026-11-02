@@ -4,6 +4,7 @@ Bản sửa tách hàm tính toán dùng chung để bảng và đồ thị dùn
 import io
 import os
 import re
+import hashlib
 from pathlib import Path
 import librosa
 import matplotlib
@@ -53,6 +54,7 @@ def _validated_mono(y, sr):
 
 
 def time_features(y, sr):
+    """Full-file amplitude statistics; ZCR is crossings per second."""
     signal = _validated_mono(y, sr)
     peak = float(np.max(np.abs(signal)))
     rms = float(np.sqrt(np.mean(signal ** 2)))
@@ -76,6 +78,8 @@ def estimate_f0(
     fmax=1200.0,
     probability_threshold=0.5,
     min_reliable_ratio=0.1,
+    start_sample=0,
+    end_sample=None,
 ):
     if not (np.isfinite(fmin) and np.isfinite(fmax) and 0 < fmin < fmax):
         raise ValueError("Cần 0 < F0 tối thiểu < F0 tối đa.")
@@ -83,6 +87,7 @@ def estimate_f0(
         raise ValueError("Ngưỡng xác suất và tỷ lệ khung phải nằm trong [0, 1].")
 
     y, sr = load_audio_bytes(data)
+    y = select_samples(y, sr, start_sample, end_sample)[0]
     analysis_sr, frame_length, hop_length = 16000, 2048, 256
     pitch = y - np.mean(y)
     if sr != analysis_sr:
@@ -163,7 +168,13 @@ def estimate_f0(
     return result
 
 
+@st.cache_data(show_spinner=False, max_entries=16)
 def fft_analysis(y, sr):
+    """One-sided Hann amplitude spectrum, with consistent amplitude moments.
+
+    Rolloff uses 85% of squared spectral amplitude; flatness also uses power.
+    A constant or silent signal has no defined dominant frequency.
+    """
     signal = _validated_mono(y, sr)
     if signal.size < 3:
         raise ValueError("Cần ít nhất 3 mẫu để áp dụng cửa sổ Hann.")
@@ -221,6 +232,154 @@ def fft_analysis(y, sr):
         "spectral_flatness": flatness,
     })
     return result
+
+
+def select_samples(y, sr, start_sample=0, end_sample=None):
+    """Chọn [start, end), giữ nguyên biên độ và SR; không tự bỏ im lặng."""
+    signal = _validated_mono(y, sr)
+    end_sample = len(signal) if end_sample is None else end_sample
+    if not isinstance(start_sample, (int, np.integer)) or not isinstance(end_sample, (int, np.integer)):
+        raise ValueError("Chỉ số mẫu phải là số nguyên.")
+    if not 0 <= start_sample < end_sample <= len(signal):
+        raise ValueError("Chọn thời điểm bắt đầu nhỏ hơn kết thúc, nằm trong bản ghi.")
+    if end_sample - start_sample < 32:
+        raise ValueError("Đoạn phân tích cần ít nhất 32 mẫu. Hãy chọn đoạn dài hơn.")
+    metadata = {
+        "Source duration (s)": len(signal) / sr,
+        "Start sample (inclusive)": int(start_sample),
+        "End sample (exclusive)": int(end_sample),
+        "Start (s)": start_sample / sr,
+        "End (s)": end_sample / sr,
+        "Duration (s)": (end_sample - start_sample) / sr,
+        "Sample Rate (Hz)": int(sr),
+        "Samples": int(end_sample - start_sample),
+    }
+    return signal[start_sample:end_sample], metadata
+
+
+def render_segment_controls(data, y, sr, prefix, with_spectrogram=False):
+    """Draft form values are applied only on submit; a new file resets results."""
+    signature = hashlib.sha256(data).hexdigest()
+    state_key = f"{prefix}_applied_segment"
+    if st.session_state.get(state_key, {}).get("signature") != signature:
+        st.session_state[state_key] = {"signature": signature, "applied": None}
+    duration = len(y) / sr
+    st.subheader("Chọn vùng phân tích")
+    with st.form(f"{prefix}_segment_form_{signature[:12]}"):
+        whole = st.checkbox("Toàn bộ bản ghi", value=True, key=f"{prefix}_whole_{signature[:12]}")
+        interval = st.slider(
+            "Vùng chọn (giây) — bỏ chọn ‘Toàn bộ bản ghi’ để sử dụng",
+            min_value=0.0, max_value=float(duration), value=(0.0, float(duration)),
+            step=float(min(0.01, duration / 100)), format="%.3f s",
+            key=f"{prefix}_range_{signature[:12]}",
+        )
+        window_ms = 40
+        if with_spectrogram:
+            window_ms = st.select_slider(
+                "Cửa sổ spectrogram (ms)", options=[20, 40, 80], value=40,
+                key=f"{prefix}_window_{signature[:12]}",
+            )
+            st.caption("20 ms: ưu tiên thời gian · 40 ms: cân bằng · 80 ms: ưu tiên tần số.")
+        submitted = st.form_submit_button("Phân tích đoạn này", type="primary")
+    if submitted:
+        start, end = (0, len(y)) if whole else (
+            int(round(interval[0] * sr)), int(round(interval[1] * sr))
+        )
+        st.session_state[state_key] = {
+            "signature": signature,
+            "applied": {"start": start, "end": end, "window_ms": window_ms},
+        }
+    config = st.session_state[state_key]["applied"]
+    if config is None:
+        st.info("Chọn vùng hoặc giữ toàn bộ bản ghi, sau đó bấm ‘Phân tích đoạn này’.")
+        return None
+    try:
+        segment, metadata = select_samples(y, sr, config["start"], config["end"])
+    except ValueError as exc:
+        st.warning(str(exc))
+        return None
+    metadata["Source SHA256"] = signature
+    st.caption(
+        f"Kết quả đang áp dụng: {metadata['Start (s)']:.6f}–{metadata['End (s)']:.6f} s "
+        f"({metadata['Samples']:,} mẫu). Trục thời gian tính từ đầu bản ghi gốc. "
+        "Đổi lựa chọn trong khung trên rồi bấm phân tích để cập nhật."
+    )
+    return segment, metadata, config["window_ms"]
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def segment_wav(y, sr):
+    """WAV float32 chỉ để nghe; phép tính vẫn dùng dữ liệu float64 gốc."""
+    buffer = io.BytesIO()
+    sf.write(buffer, y, sr, format="WAV", subtype="FLOAT")
+    return buffer.getvalue()
+
+
+def with_segment_metadata(frame, metadata):
+    result = frame.copy()
+    for name, value in metadata.items():
+        result[name] = value
+    return result
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def spectrogram_analysis(y, sr, window_ms=40):
+    """STFT Hann, không đệm; dB tương đối theo đỉnh STFT của đoạn chọn."""
+    signal = _validated_mono(y, sr)
+    if window_ms not in (20, 40, 80):
+        raise ValueError("Chọn cửa sổ 20, 40 hoặc 80 ms.")
+    window_length = max(8, int(round(sr * window_ms / 1000)))
+    if len(signal) < window_length:
+        raise ValueError(
+            f"Đoạn chọn ngắn hơn cửa sổ {window_ms} ms. "
+            "Hãy chọn đoạn dài hơn hoặc giảm cửa sổ; không chèn mẫu giả."
+        )
+    bins = window_length // 2 + 1
+    # Bound cached matrices and rendered cells before allocating the STFT.
+    max_frames = max(2, min(1200, 500_000 // bins))
+    default_hop = max(1, window_length // 4)
+    required_hop = int(np.ceil((len(signal) - window_length) / (max_frames - 1)))
+    hop = max(default_hop, required_hop)
+    centered = signal - np.mean(signal)
+    if np.ptp(signal) == 0:
+        centered = np.zeros_like(signal)
+    magnitude = np.abs(librosa.stft(
+        centered, n_fft=window_length, win_length=window_length,
+        hop_length=hop, window="hann", center=False,
+    ))
+    peak = float(np.max(magnitude))
+    db = np.full(magnitude.shape, -80.0)
+    if peak > 0:
+        db = np.maximum(20 * np.log10(np.maximum(magnitude / peak, 1e-4)), -80.0)
+    return {
+        "db": db,
+        "frequencies": np.fft.rfftfreq(window_length, 1 / sr),
+        "times": (np.arange(db.shape[1]) * hop + window_length / 2) / sr,
+        "window_length": window_length, "hop_length": hop,
+        "window_ms": window_ms, "adaptive_hop": hop > default_hop,
+        "silent": peak == 0, "bin_spacing_hz": sr / window_length,
+        "last_frame_end_s": ((db.shape[1] - 1) * hop + window_length) / sr,
+    }
+
+
+def spectrogram_figure(result, sr, start_s, frequency_limit):
+    frequencies = result["frequencies"]
+    # Include at least the DC bin; pcolormesh uses explicit cell edges even for 1 frame.
+    count = max(1, int(np.searchsorted(frequencies, frequency_limit, side="right")))
+    frequencies = frequencies[:count]
+    df = result["bin_spacing_hz"]
+    f_edges = np.r_[np.maximum(0, frequencies - df / 2), min(sr / 2, frequencies[-1] + df / 2)]
+    times = result["times"] + start_s
+    half_step = result["hop_length"] / (2 * sr)
+    t_edges = np.r_[times - half_step, times[-1] + half_step]
+    fig, ax = plt.subplots(figsize=(11, 4.2))
+    mesh = ax.pcolormesh(t_edges, f_edges, result["db"][:count],
+                         shading="flat", cmap="magma", vmin=-80, vmax=0, rasterized=True)
+    ax.set(xlabel="Thời gian trong bản ghi gốc (s)", ylabel="Tần số (Hz)",
+           title=f"Spectrogram · cửa sổ {result['window_ms']} ms · bắt đầu {start_s:.3f} s")
+    fig.colorbar(mesh, ax=ax, label="dB tương đối (đỉnh STFT của đoạn = 0 dB)")
+    fig.tight_layout()
+    return fig
 
 
 def show_figure(fig, filename, key):
@@ -282,30 +441,35 @@ def render_single_tab():
         return
     try:
         y, sr = load_audio_bytes(uploaded.getvalue())
-        values = time_features(y, sr)
         st.audio(uploaded.getvalue(), format="audio/wav")
+        selected = render_segment_controls(uploaded.getvalue(), y, sr, "tab1")
+        if selected is None:
+            return
+        y, segment_metadata, _ = selected
+        values = time_features(y, sr)
+        st.caption("Nghe đoạn đang phân tích")
+        st.audio(segment_wav(y, sr), format="audio/wav")
         a, b, c = st.columns(3)
         a.metric("Tần số lấy mẫu", f"{sr:,} Hz")
         b.metric("Thời lượng", f"{len(y) / sr:.3f} s")
         c.metric("Số mẫu", f"{len(y):,}")
         st.dataframe(pd.DataFrame([values]).round(6), width="stretch", hide_index=True)
         st.caption(
-            "RMS là biên độ hiệu dụng. Các chỉ số tính trên toàn bản ghi mono, "
+            "RMS là biên độ hiệu dụng. Các chỉ số tính trên đoạn mono đang chọn, "
             "không chuẩn hóa từng file theo Peak. ZCR dùng số lần đổi dấu mỗi giây; "
             "mẫu bằng 0 được xem là không âm."
         )
         if values["Peak"] >= 0.999:
             st.warning("Tín hiệu mono gần/chạm full scale; nên kiểm tra clipping.")
         fig, ax = plt.subplots(figsize=(11, 3.8))
-        ax.plot(np.arange(len(y)) / sr, y, linewidth=0.7)
-        ax.set(title=f"Waveform: {uploaded.name}", xlabel="Thời gian (s)",
+        ax.plot(segment_metadata["Start (s)"] + np.arange(len(y)) / sr, y, linewidth=0.7)
+        ax.set(title=f"Waveform: {uploaded.name} · {segment_metadata['Start (s)']:.3f}–{segment_metadata['End (s)']:.3f} s", xlabel="Thời gian trong bản ghi gốc (s)",
                ylabel="Biên độ số")
         ax.axhline(0, color="gray", linewidth=0.6)
         ax.grid(alpha=0.3)
         fig.tight_layout()
         show_figure(fig, "waveform.png", "tab1_waveform_png")
-        download_csv(pd.DataFrame([{"File": uploaded.name,
-                                   "Sample Rate (Hz)": sr, **values}]),
+        download_csv(pd.DataFrame([{"File": uploaded.name, **segment_metadata, **values}]),
                      "single_features.csv", "tab1_csv")
     except (ValueError, RuntimeError, OSError) as exc:
         st.error(f"Không thể phân tích file: {exc}")
@@ -439,6 +603,15 @@ def render_frequency_tab(f0_settings):
     data = uploaded.getvalue()
     try:
         y, sr = load_audio_bytes(data)
+        st.caption("Nghe bản ghi gốc để xác định vùng cần phân tích")
+        st.audio(data, format="audio/wav")
+        selected = render_segment_controls(data, y, sr, "tab3", with_spectrogram=True)
+        if selected is None:
+            return
+        y, segment_metadata, window_ms = selected
+        segment_metadata["File"] = uploaded.name
+        st.caption("Nghe đoạn đang phân tích")
+        st.audio(segment_wav(y, sr), format="audio/wav")
         spectrum = fft_analysis(y, sr)
     except Exception as exc:
         st.error(f"Không thể đọc hoặc phân tích phổ của file: {exc}")
@@ -487,7 +660,7 @@ def render_frequency_tab(f0_settings):
             label=f"Tần số trội: {dominant_frequency:.2f} Hz",
         )
     ax_fft.set(
-        title="FFT sau khi bỏ DC và áp dụng cửa sổ Hann",
+        title=f"FFT · {segment_metadata['Start (s)']:.3f}–{segment_metadata['End (s)']:.3f} s · bỏ DC, cửa sổ Hann",
         xlabel="Tần số (Hz)", ylabel="Biên độ số",
         xlim=(0, max(frequency_limit, frequency_resolution)),
     )
@@ -496,9 +669,45 @@ def render_frequency_tab(f0_settings):
     fig_fft.tight_layout()
     show_figure(fig_fft, "fft_spectrum.png", "tab3_fft_png")
     st.caption(
-        "Thanh giới hạn chỉ thay đổi vùng nhìn của hình. Đỉnh phổ và đặc trưng "
+        "Thanh giới hạn chỉ thay đổi vùng nhìn của FFT và spectrogram. Đỉnh phổ và đặc trưng "
         "bên dưới vẫn được tính trên toàn dải từ 0 đến SR/2."
     )
+
+    st.subheader("Spectrogram — phổ theo thời gian")
+    export_metadata = dict(segment_metadata)
+    export_metadata["STFT requested window (ms)"] = window_ms
+    try:
+        stft_result = spectrogram_analysis(y, sr, window_ms)
+        show_figure(spectrogram_figure(stft_result, sr, segment_metadata["Start (s)"],
+                                      frequency_limit), "spectrogram.png", "tab3_spectrogram_png")
+        export_metadata.update({
+            "STFT window": "hann", "STFT n_fft": stft_result["window_length"],
+            "STFT hop (samples)": stft_result["hop_length"], "STFT center": False,
+            "STFT DC removed": True, "STFT floor (dB)": -80,
+            "STFT dB reference": "maximum STFT magnitude of selected segment",
+            "STFT adaptive hop": stft_result["adaptive_hop"],
+            "STFT status": "silent" if stft_result["silent"] else "ok",
+        })
+        st.caption(
+            f"Hann {stft_result['window_length']} mẫu; bước khung "
+            f"{stft_result['hop_length'] / sr * 1000:.2f} ms; "
+            f"khoảng cách bin {stft_result['bin_spacing_hz']:.2f} Hz. "
+            "Chỉ dùng khung đầy đủ, không đệm ở hai đầu. "
+            "Màu biểu diễn dB tương đối trong đoạn đang chọn, không phải dB SPL "
+            "và không dùng để so độ to tuyệt đối giữa các file."
+        )
+        if stft_result["adaptive_hop"]:
+            st.info("Đoạn dài: đã tăng bước khung để giữ biểu đồ nhẹ. Có thể bỏ lỡ sự kiện ngắn; chọn đoạn ngắn hơn để xem chi tiết.")
+        if stft_result["silent"]:
+            st.info("Đoạn im lặng hoặc chỉ có DC: không có phổ sau khi bỏ DC; màu nền hiển thị ở −80 dB.")
+    except ValueError as exc:
+        export_metadata["STFT status"] = str(exc)
+        st.info(str(exc))
+    export_metadata.update({f"F0 {key}": value for key, value in f0_settings.items()})
+    export_metadata.update({"F0 analysis SR (Hz)": 16000, "F0 frame length": 2048,
+                            "F0 hop length": 256, "F0 center": False})
+    download_csv(pd.DataFrame([export_metadata]), "analysis_settings.csv", "tab3_settings_csv",
+                 "Tải thông số và vùng phân tích (CSV)")
 
     st.subheader("Các đỉnh phổ nổi bật")
     # Khởi tạo cả khi không có đỉnh; file im lặng không làm lỗi bảng/CSV.
@@ -517,7 +726,7 @@ def render_frequency_tab(f0_settings):
         )
     st.download_button(
         "Tải bảng đỉnh phổ (CSV)",
-        data=peak_table.to_csv(index=False).encode("utf-8-sig"),
+        data=with_segment_metadata(peak_table, segment_metadata).to_csv(index=False).encode("utf-8-sig"),
         file_name="fft_peaks.csv", mime="text/csv", key="tab3_download_peaks",
     )
 
@@ -548,7 +757,7 @@ def render_frequency_tab(f0_settings):
     )
     st.download_button(
         "Tải đặc trưng miền tần số (CSV)",
-        data=features.to_csv(index=False).encode("utf-8-sig"),
+        data=with_segment_metadata(features, segment_metadata).to_csv(index=False).encode("utf-8-sig"),
         file_name="frequency_features.csv", mime="text/csv",
         key="tab3_download_features",
     )
@@ -561,7 +770,9 @@ def render_frequency_tab(f0_settings):
         "đã chọn. Tiếng vỗ tay hoặc âm nhiễu có thể không có F0 ổn định."
     )
     try:
-        f0_result = estimate_f0(data, **f0_settings)
+        f0_result = estimate_f0(data, **f0_settings,
+                                start_sample=segment_metadata["Start sample (inclusive)"],
+                                end_sample=segment_metadata["End sample (exclusive)"])
         estimated_f0 = float(f0_result["f0_hz"])
         reliable_ratio = float(f0_result["reliable_ratio"])
         voiced_ratio = float(f0_result["voiced_ratio"])
@@ -612,7 +823,7 @@ def render_frequency_tab(f0_settings):
                 "nếu đoạn thu thay đổi cao độ."
             )
 
-            times = np.asarray(f0_result["times"], dtype=float)
+            times = np.asarray(f0_result["times"], dtype=float) + segment_metadata["Start (s)"]
             contour = np.asarray(f0_result["contour"], dtype=float)
             if times.shape == contour.shape and np.any(np.isfinite(contour)):
                 fig_f0, ax_f0 = plt.subplots(figsize=(11, 3))
@@ -623,7 +834,7 @@ def render_frequency_tab(f0_settings):
                 )
                 ax_f0.set(
                     title="F0 theo thời gian ở các khung đủ tin cậy",
-                    xlabel="Thời gian (s)", ylabel="F0 (Hz)",
+                    xlabel="Thời gian trong bản ghi gốc (s)", ylabel="F0 (Hz)",
                 )
                 ax_f0.grid(alpha=0.3)
                 ax_f0.legend()
@@ -692,7 +903,7 @@ def render_frequency_tab(f0_settings):
                 st.dataframe(harmonics.round(6), width="stretch", hide_index=True)
                 st.download_button(
                     "Tải bảng ứng viên họa âm (CSV)",
-                    data=harmonics.to_csv(index=False).encode("utf-8-sig"),
+                    data=with_segment_metadata(harmonics, segment_metadata).to_csv(index=False).encode("utf-8-sig"),
                     file_name="harmonic_candidates.csv", mime="text/csv",
                     key="tab3_f0_harmonics_csv",
                 )
@@ -709,17 +920,12 @@ def render_frequency_tab(f0_settings):
         # Lỗi F0 không che mất các kết quả FFT và khả năng nghe lại bản thu.
         st.error(f"Không thể hoàn tất phân tích F0: {exc}")
 
-    st.divider()
-    st.subheader("Nghe lại file âm thanh")
-    st.audio(data, format="audio/wav")
-
-
 def main():
     st.set_page_config(page_title="6-STARS | Phân tích và phân biệt âm thanh", layout="wide")
     st.title("Phần Mềm Phân Tích Và Xử Lý Tín Hiệu Âm Thanh")
     st.subheader("Đề tài: Phân tích và phân biệt âm thanh thông qua đặc trưng tín hiệu miền thời gian và miền tần số")
     st.caption("6-STARS")
-    image_path = Path(__file__).resolve().parent / "DSC02174.JPG"
+    image_path = Path(__file__).resolve().parent / "assets" / "DSC02174.JPG"
     if image_path.is_file():
         _, center, _ = st.columns([1, 2, 1])
         with center:
